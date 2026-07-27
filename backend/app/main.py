@@ -10,6 +10,11 @@ from app.websocket.manager import manager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Ensure all tables exist on startup (handles empty SQLite database on Render/deployments)
+    from app.models.user import User
+    from app.models.meeting import Meeting, Participant
+    Base.metadata.create_all(bind=engine)
+
     # Start the background heartbeat monitoring task
     heartbeat_task = asyncio.create_task(manager.start_heartbeat_monitor())
     yield
