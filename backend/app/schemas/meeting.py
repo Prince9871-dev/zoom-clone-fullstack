@@ -57,6 +57,9 @@ class MeetingResponse(BaseModel):
     scheduled_at: datetime
     duration_minutes: int
     status: str
+    meeting_started_at: Optional[datetime] = None
+    is_recording: bool = False
+    recording_started_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     participants: List[ParticipantResponse] = []

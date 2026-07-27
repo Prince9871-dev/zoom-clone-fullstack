@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
@@ -56,7 +56,91 @@ def get_meeting(meeting_id: str, db: Session = Depends(get_db)):
     """Retrieves full details of a specific meeting using its unique Zoom-style public ID (abc-1234-xyz)."""
     return MeetingService.get_meeting_by_id(db, meeting_id)
 
+from pydantic import BaseModel
+from datetime import datetime
+from app.models.meeting import Meeting, Participant
+
+class ParticipantLeaveRequest(BaseModel):
+    display_name: str
+
 @router.delete("/{meeting_id}", status_code=status.HTTP_200_OK)
 def delete_meeting(meeting_id: str, db: Session = Depends(get_db)):
     """Deletes/cancels a specific meeting by its unique Zoom-style public ID (abc-1234-xyz)."""
     return MeetingService.delete_meeting(db, meeting_id)
+
+@router.post("/{meeting_id}/leave", status_code=status.HTTP_200_OK)
+def leave_meeting(meeting_id: str, data: ParticipantLeaveRequest, db: Session = Depends(get_db)):
+    """Updates the left_at column for the participant leaving the meeting."""
+    from sqlalchemy import select
+    # Find the meeting
+    stmt = select(Meeting).where(Meeting.meeting_id == meeting_id)
+    meeting = db.execute(stmt).scalar_one_or_none()
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting with ID {meeting_id} not found"
+        )
+    
+    # Find active participant matching name in this meeting (where left_at is null)
+    stmt = select(Participant).where(
+        Participant.meeting_id == meeting.id,
+        Participant.display_name == data.display_name,
+        Participant.left_at.is_(None)
+    )
+    participant = db.execute(stmt).scalars().first()
+    if participant:
+        participant.left_at = datetime.now()
+        db.commit()
+    return {"detail": "Left meeting successfully"}
+
+
+@router.post("/{meeting_id}/start", response_model=MeetingResponse, status_code=status.HTTP_200_OK)
+def start_meeting(meeting_id: str, db: Session = Depends(get_db)):
+    """Starts the meeting timer by setting meeting_started_at timestamp."""
+    from sqlalchemy import select
+    stmt = select(Meeting).where(Meeting.meeting_id == meeting_id)
+    meeting = db.execute(stmt).scalar_one_or_none()
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting '{meeting_id}' not found"
+        )
+    if not meeting.meeting_started_at:
+        meeting.meeting_started_at = datetime.now()
+        db.commit()
+    return meeting
+
+
+@router.post("/{meeting_id}/recording/start", response_model=MeetingResponse, status_code=status.HTTP_200_OK)
+def start_recording(meeting_id: str, db: Session = Depends(get_db)):
+    """Activates the meeting recording state."""
+    from sqlalchemy import select
+    stmt = select(Meeting).where(Meeting.meeting_id == meeting_id)
+    meeting = db.execute(stmt).scalar_one_or_none()
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting '{meeting_id}' not found"
+        )
+    meeting.is_recording = True
+    meeting.recording_started_at = datetime.now()
+    db.commit()
+    return meeting
+
+
+@router.post("/{meeting_id}/recording/stop", response_model=MeetingResponse, status_code=status.HTTP_200_OK)
+def stop_recording(meeting_id: str, db: Session = Depends(get_db)):
+    """Deactivates the meeting recording state."""
+    from sqlalchemy import select
+    stmt = select(Meeting).where(Meeting.meeting_id == meeting_id)
+    meeting = db.execute(stmt).scalar_one_or_none()
+    if not meeting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Meeting '{meeting_id}' not found"
+        )
+    meeting.is_recording = False
+    meeting.recording_started_at = None
+    db.commit()
+    return meeting
+
